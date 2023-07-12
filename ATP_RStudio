@@ -1,0 +1,63 @@
+# Set the path to your data
+path <- "C:/Users/Jon/Desktop/ATP Data"
+
+# List all CSV files in the directory
+files <- list.files(path, pattern = "*.csv", full.names = TRUE)
+
+# Load and bind all CSV files into a single dataframe
+data <- files %>% 
+  map_dfr(read_csv) %>%
+  select(ID, RLU)  # Only select the ID and RLU columns
+
+# Create a new variable based on the content of the "ID" variable
+data <- data %>% 
+  mutate(Group = case_when(
+    str_detect(ID, "Experimental") ~ "Experimental",
+    str_detect(ID, "Control") ~ "Control",
+    TRUE ~ "Unknown"),
+  Day = as.numeric(str_extract(ID, "\\d+")),
+  Type = if_else(str_detect(ID, "Blank"), "Blank", "Non-blank")) %>%
+  filter(Day != 2)  # Filter out Day 2
+
+# Reorder the levels of Day
+data$Day <- factor(data$Day, levels = c(4, 6, 8, 10, 12, 14))
+
+# Calculate the average RLU for each combination of Group, Type, and Day
+data_avg <- data %>%
+  group_by(Group, Type, Day) %>%
+  summarize(Avg_RLU = mean(RLU, na.rm = TRUE), .groups = "drop")
+
+# Separate data_avg into two: one for Blank and one for Non-blank
+blank <- data_avg %>% filter(Type == "Blank")
+non_blank <- data_avg %>% filter(Type == "Non-blank")
+
+# Perform a full join on the 'blank' and 'non_blank' dataframes, merging on 'Group' and 'Day'
+merged_data <- full_join(non_blank, blank, by = c("Group", "Day"), suffix = c("_non_blank", "_blank"))
+
+# Subtract the 'Blank' RLU averages from the 'Non-blank' ones and calculate SEM
+merged_data <- merged_data %>%
+  mutate(Difference_RLU = Avg_RLU_non_blank - Avg_RLU_blank,
+         sem = sd(Difference_RLU, na.rm = TRUE) / sqrt(n()))
+
+# Create a bar plot with error bars, each day on X-axis, fill with Group
+plot <- ggplot(merged_data, aes(x = Day, y = Difference_RLU, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge(), colour = "black", width = 0.8) +
+  geom_errorbar(aes(ymin = Difference_RLU - sem, ymax = Difference_RLU + sem), 
+                width = 0.2, colour = "black", size = 1.5, lwd = 1.5, position = position_dodge(.9)) +
+  labs(x = "Day", y = "Difference RLU") +
+  theme_bw() +
+  ggtitle("Difference RLU for each Group by Day") +
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.title.y = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(size = 12, face = "bold", angle = 0),
+        axis.text.y = element_text(size = 12),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        axis.line.x = element_line(color = "black"),
+        axis.line.y = element_line(color = "black")) +
+  scale_fill_manual(values = c("grey", "white")) +
+  scale_y_log10() +
+  scale_y_continuous(expand = expansion(add = c(0, 0)))
+
+plot
